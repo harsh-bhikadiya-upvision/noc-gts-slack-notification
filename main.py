@@ -21,6 +21,7 @@ JIRA_EMAIL      = os.getenv("JIRA_EMAIL")
 JIRA_API_TOKEN  = os.getenv("JIRA_API_TOKEN")
 SLACK_WEBHOOK   = os.getenv("SLACK_WEBHOOK_URL")
 JENKINS_BUILD_URL = os.getenv("BUILD_URL")
+GIT_URL         = os.getenv("GIT_URL")
 # Define the queues you want to monitor.
 # Each entry:  { "name": "Display name", "jql": "JQL query string" }
 
@@ -235,16 +236,6 @@ def build_slack_payload(queue_summaries: list[dict], jira_base_url: str) -> dict
                     "url": q["open_url"],
                     "action_id": f"open_jira_{q['name'].lower().replace(' ', '_')}",
                     "style": "primary"
-                },
-                {
-                    "type": "button",
-                    "text": {
-                        "type": "plain_text",
-                        "text": "⚙️ View Jenkins Build",
-                        "emoji": True,
-                    },
-                    "url": q['jenkins_build_url'], # Fallback URL if missing
-                    "action_id": f"view_jenkins_{queue_slug}"
                 }
             ]
         }
@@ -252,6 +243,34 @@ def build_slack_payload(queue_summaries: list[dict], jira_base_url: str) -> dict
 
         # Divider between multiple queues
         blocks.append({"type": "divider"})
+
+    # Add global actions once per notification
+    global_actions = {
+        "type": "actions",
+        "elements": [
+            {
+                "type": "button",
+                "text": {
+                    "type": "plain_text",
+                    "text": "⚙️ View Jenkins Build",
+                    "emoji": True,
+                },
+                "url": JENKINS_BUILD_URL,
+                "action_id": "view_jenkins_build"
+            },
+            {
+                "type": "button",
+                "text": {
+                    "type": "plain_text",
+                    "text": "📦 View Python Script",
+                    "emoji": True,
+                },
+                "url": GIT_URL,
+                "action_id": "view_github_script"
+            }
+        ]
+    }
+    blocks.append(global_actions)
 
     return {"blocks": blocks}
 
@@ -284,6 +303,7 @@ def run_report():
                 "jql":         queue["jql"],
                 "open_url":    f"{JIRA_BASE_URL}/jira/servicedesk/projects/{queue['project_key']}/queues/custom/{queue['queue_id']}",
                 "jenkins_build_url": JENKINS_BUILD_URL,
+                "git_url":     GIT_URL,
                 "total":       len(issues),
                 "unassigned":  count_unassigned(issues),
                 "breached":    sla_counts["breached"],
