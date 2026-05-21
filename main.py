@@ -220,7 +220,7 @@ def build_slack_payload(queue_summaries: list[dict], jira_base_url: str) -> dict
             ],
         }
         blocks.append(fields_block)
-
+        queue_slug = q['name'].lower().replace(' ', '_')
         # 4. Action block placed cleanly below the metrics row
         action_block = {
             "type": "actions",
