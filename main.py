@@ -42,10 +42,7 @@ def fetch_queue_config(project_key: str, queue_id: int) -> dict[str, object]:
     }
     return ans
 
-QUEUE_CONFIG = [
-    fetch_queue_config("GTS", 24),
-    fetch_queue_config("NOC", 25),
-]
+# Wait to fetch configs in the actual run functions instead of globally.
 
 # How often to run (in minutes). Change to suit your schedule.
 # RUN_EVERY_MINUTES = 60
@@ -158,8 +155,8 @@ def count_unassigned(issues: list[dict]) -> int:
     """Return the number of issues with no assignee."""
     return sum(1 for issue in issues if issue["fields"].get("assignee") is None)
 
-def build_slack_payload(queue_summaries: list[dict], jira_base_url: str) -> dict:
-    """Build a dynamic, highly scannable, and fabulous Slack Block Kit message."""
+def build_gts_slack_payload(q: dict) -> dict:
+    """Build a dynamic, highly scannable, and fabulous Slack Block Kit message for GTS."""
     now = datetime.now().strftime("%d %b %Y, %H:%M")
 
     # Header section with a clean layout and dynamic timestamp
@@ -168,7 +165,7 @@ def build_slack_payload(queue_summaries: list[dict], jira_base_url: str) -> dict
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": "📊 Jira Queue Status Report",
+                "text": "📊 GTS Queue Status Report",
                 "emoji": True,
             },
         },
@@ -179,72 +176,71 @@ def build_slack_payload(queue_summaries: list[dict], jira_base_url: str) -> dict
         {"type": "divider"},
     ]
 
-    for q in queue_summaries:
-        total = q["total"]
+    total = q["total"]
 
-        # 1. Format the status breakdown into a clean bulleted list with bolded numbers
-        status_lines = "\n".join(
-            f"• *{s}*: *`{c}`*"
-            for s, c in sorted(q["by_status"].items(), key=lambda x: -x[1])
-        )
-        if not status_lines:
-            status_lines = "• _No tickets found_"
+    # 1. Format the status breakdown into a clean bulleted list with bolded numbers
+    status_lines = "\n".join(
+        f"• *{s}*: *`{c}`*"
+        for s, c in sorted(q["by_status"].items(), key=lambda x: -x[1])
+    )
+    if not status_lines:
+        status_lines = "• _No tickets found_"
 
-        # 2. Simplified queue header block with bolded numbers
-        queue_header_block = {
-            "type": "section",
-            "text": {
+    # 2. Simplified queue header block with bolded numbers
+    queue_header_block = {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": (
+                f"📂 *{q['name'].upper()}*\n"
+                f"📥 *Total Pending:* *`{total}`* ticket{'s' if total != 1 else ''}  |  "
+                f"👤 *Unassigned:* *`{q['unassigned']}`*"
+            ),
+        },
+    }
+    blocks.append(queue_header_block)
+
+    # 3. Add the SLA Metrics and Status breakdown side-by-side with bolded metrics
+    fields_block = {
+        "type": "section",
+        "fields": [
+            {
                 "type": "mrkdwn",
                 "text": (
-                    f"📂 *{q['name'].upper()}*\n"
-                    f"📥 *Total Pending:* *`{total}`* ticket{'s' if total != 1 else ''}  |  "
-                    f"👤 *Unassigned:* *`{q['unassigned']}`*"
+                    f"*Time to Resolution:*\n"
+                    f"🔴 Breached: *`{q['breached']}`*\n"
+                    f"🟡 Paused but Time Over: *`{q['yellow']}`*\n"
+                    f"⚪ Not Breached: *`{q['grey']}`*"
                 ),
             },
-        }
-        blocks.append(queue_header_block)
-
-        # 3. Add the SLA Metrics and Status breakdown side-by-side with bolded metrics
-        fields_block = {
-            "type": "section",
-            "fields": [
-                {
-                    "type": "mrkdwn",
-                    "text": (
-                        f"*Time to Resolution:*\n"
-                        f"🔴 Breached: *`{q['breached']}`*\n"
-                        f"🟡 Paused but Time Over: *`{q['yellow']}`*\n"
-                        f"⚪ Not Breached: *`{q['grey']}`*"
-                    ),
+            {"type": "mrkdwn", "text": f"*Status Breakdown:*\n{status_lines}"},
+        ],
+    }
+    blocks.append(fields_block)
+    
+    # 4. Action block placed cleanly below the metrics row
+    action_block = {
+        "type": "actions",
+        "elements": [
+            {
+                "type": "button",
+                "text": {
+                    "type": "plain_text",
+                    "text": "🚀 Open Queue",
+                    "emoji": True,
                 },
-                {"type": "mrkdwn", "text": f"*Status Breakdown:*\n{status_lines}"},
-            ],
-        }
-        blocks.append(fields_block)
-        queue_slug = q['name'].lower().replace(' ', '_')
-        # 4. Action block placed cleanly below the metrics row
-        action_block = {
-            "type": "actions",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {
-                        "type": "plain_text",
-                        "text": "🚀 Open Queue",
-                        "emoji": True,
-                    },
-                    "url": q["open_url"],
-                    "action_id": f"open_jira_{q['name'].lower().replace(' ', '_')}",
-                    "style": "primary"
-                }
-            ]
-        }
-        blocks.append(action_block)
+                "url": q["open_url"],
+                "action_id": f"open_jira_gts",
+                "style": "primary"
+            }
+        ]
+    }
+    blocks.append(action_block)
 
-        # Divider between multiple queues
-        blocks.append({"type": "divider"})
+    # Divider
+    blocks.append({"type": "divider"})
 
-    # Add global actions once per notification
+    # Add global actions
     global_actions = {
         "type": "actions",
         "elements": [
@@ -265,7 +261,7 @@ def build_slack_payload(queue_summaries: list[dict], jira_base_url: str) -> dict
                     "text": "📦 View Python Script",
                     "emoji": True,
                 },
-                "url": GIT_URL,
+                "url": GIT_URL if GIT_URL else "",
                 "action_id": "view_github_script"
             }
         ]
@@ -273,6 +269,123 @@ def build_slack_payload(queue_summaries: list[dict], jira_base_url: str) -> dict
     blocks.append(global_actions)
 
     return {"blocks": blocks}
+
+
+def build_noc_slack_payload(q: dict) -> dict:
+    """Build a dynamic, highly scannable, and fabulous Slack Block Kit message for NOC."""
+    now = datetime.now().strftime("%d %b %Y, %H:%M")
+
+    # Header section with a clean layout and dynamic timestamp
+    blocks = [
+        {
+            "type": "header",
+            "text": {
+                "type": "plain_text",
+                "text": "📊 NOC Queue Status Report",
+                "emoji": True,
+            },
+        },
+        {
+            "type": "context",
+            "elements": [{"type": "mrkdwn", "text": f"🕒 Generated on *{now}*"}],
+        },
+        {"type": "divider"},
+    ]
+
+    total = q["total"]
+
+    # 1. Format the status breakdown into a clean bulleted list with bolded numbers
+    status_lines = "\n".join(
+        f"• *{s}*: *`{c}`*"
+        for s, c in sorted(q["by_status"].items(), key=lambda x: -x[1])
+    )
+    if not status_lines:
+        status_lines = "• _No tickets found_"
+
+    # 2. Simplified queue header block with bolded numbers
+    queue_header_block = {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": (
+                f"📂 *{q['name'].upper()}*\n"
+                f"📥 *Total Pending:* *`{total}`* ticket{'s' if total != 1 else ''}  |  "
+                f"👤 *Unassigned:* *`{q['unassigned']}`*"
+            ),
+        },
+    }
+    blocks.append(queue_header_block)
+
+    # 3. Add the SLA Metrics and Status breakdown side-by-side with bolded metrics
+    fields_block = {
+        "type": "section",
+        "fields": [
+            {
+                "type": "mrkdwn",
+                "text": (
+                    f"*Time to Resolution:*\n"
+                    f"🔴 Breached: *`{q['breached']}`*\n"
+                    f"🟡 Paused but Time Over: *`{q['yellow']}`*\n"
+                    f"⚪ Not Breached: *`{q['grey']}`*"
+                ),
+            },
+            {"type": "mrkdwn", "text": f"*Status Breakdown:*\n{status_lines}"},
+        ],
+    }
+    blocks.append(fields_block)
+
+    # 4. Action block placed cleanly below the metrics row
+    action_block = {
+        "type": "actions",
+        "elements": [
+            {
+                "type": "button",
+                "text": {
+                    "type": "plain_text",
+                    "text": "🚀 Open Queue",
+                    "emoji": True,
+                },
+                "url": q["open_url"],
+                "action_id": f"open_jira_noc",
+                "style": "primary"
+            }
+        ]
+    }
+    blocks.append(action_block)
+
+    # Divider
+    blocks.append({"type": "divider"})
+
+    # Add global actions
+    global_actions = {
+        "type": "actions",
+        "elements": [
+            {
+                "type": "button",
+                "text": {
+                    "type": "plain_text",
+                    "text": "⚙️ View Jenkins Build",
+                    "emoji": True,
+                },
+                "url": JENKINS_BUILD_URL,
+                "action_id": "view_jenkins_build"
+            },
+            {
+                "type": "button",
+                "text": {
+                    "type": "plain_text",
+                    "text": "📦 View Python Script",
+                    "emoji": True,
+                },
+                "url": GIT_URL if GIT_URL else "",
+                "action_id": "view_github_script"
+            }
+        ]
+    }
+    blocks.append(global_actions)
+
+    return {"blocks": blocks}
+
 
 def post_to_slack(payload: dict) -> None:
     resp = requests.post(
@@ -286,46 +399,99 @@ def post_to_slack(payload: dict) -> None:
 
 # ─── Main job ──────────────────────────────────────────────────────────────────
 
+def fetch_gts_data() -> dict:
+    queue = fetch_queue_config("GTS", 465)
+    log.info(f"  Fetching GTS: {queue['name']}")
+    issues = fetch_issues(queue["jql"])
+    by_status = group_by_status(issues)
+    sla_counts = aggregate_sla_counts(issues)
+    
+    log.info(
+        f"    → {len(issues)} issues across {len(by_status)} statuses, "
+        f"{count_unassigned(issues)} unassigned, {sla_counts['breached']} breached, "
+        f"{sla_counts['yellow']} yellow, {sla_counts['grey']} grey"
+    )
+    
+    return {
+        "name":        queue["name"],
+        "project_key": queue["project_key"],
+        "queue_id":    queue["queue_id"],
+        "jql":         queue["jql"],
+        "open_url":    f"{JIRA_BASE_URL}/jira/servicedesk/projects/{queue['project_key']}/queues/custom/{queue['queue_id']}",
+        "jenkins_build_url": JENKINS_BUILD_URL,
+        "git_url":     GIT_URL,
+        "total":       len(issues),
+        "unassigned":  count_unassigned(issues),
+        "breached":    sla_counts["breached"],
+        "yellow":      sla_counts["yellow"],
+        "grey":        sla_counts["grey"],
+        "by_status":   by_status,
+    }
+
+
+def fetch_noc_data() -> dict:
+    queue = fetch_queue_config("NOC", 529)
+    log.info(f"  Fetching NOC: {queue['name']}")
+    issues = fetch_issues(queue["jql"])
+    by_status = group_by_status(issues)
+    sla_counts = aggregate_sla_counts(issues)
+    
+    log.info(
+        f"    → {len(issues)} issues across {len(by_status)} statuses, "
+        f"{count_unassigned(issues)} unassigned, {sla_counts['breached']} breached, "
+        f"{sla_counts['yellow']} yellow, {sla_counts['grey']} grey"
+    )
+    
+    return {
+        "name":        queue["name"],
+        "project_key": queue["project_key"],
+        "queue_id":    queue["queue_id"],
+        "jql":         queue["jql"],
+        "open_url":    f"{JIRA_BASE_URL}/jira/servicedesk/projects/{queue['project_key']}/queues/custom/{queue['queue_id']}",
+        "jenkins_build_url": JENKINS_BUILD_URL,
+        "git_url":     GIT_URL,
+        "total":       len(issues),
+        "unassigned":  count_unassigned(issues),
+        "breached":    sla_counts["breached"],
+        "yellow":      sla_counts["yellow"],
+        "grey":        sla_counts["grey"],
+        "by_status":   by_status,
+    }
+
+
+def run_gts_report():
+    log.info("Starting GTS queue report…")
+    try:
+        summary = fetch_gts_data()
+        if summary["total"] == 0:
+            log.warning("No GTS data collected — skipping Slack notification.")
+            return
+
+        payload = build_gts_slack_payload(summary)
+        post_to_slack(payload)
+        log.info("GTS Slack notification sent.")
+    except Exception as exc:
+        log.error(f"  ✗ Failed to run GTS report: {exc}")
+
+
+def run_noc_report():
+    log.info("Starting NOC queue report…")
+    try:
+        summary = fetch_noc_data()
+        if summary["total"] == 0:
+            log.warning("No NOC data collected — skipping Slack notification.")
+            return
+
+        payload = build_noc_slack_payload(summary)
+        post_to_slack(payload)
+        log.info("NOC Slack notification sent.")
+    except Exception as exc:
+        log.error(f"  ✗ Failed to run NOC report: {exc}")
+
+
 def run_report():
-    log.info("Starting Jira queue report…")
-    queue_summaries = []
-
-    for queue in QUEUE_CONFIG:
-        log.info(f"  Fetching: {queue['name']}")
-        try:
-            issues = fetch_issues(queue["jql"])
-            by_status = group_by_status(issues)
-            sla_counts = aggregate_sla_counts(issues)
-            queue_summaries.append({
-                "name":        queue["name"],
-                "project_key": queue["project_key"],
-                "queue_id":    queue["queue_id"],
-                "jql":         queue["jql"],
-                "open_url":    f"{JIRA_BASE_URL}/jira/servicedesk/projects/{queue['project_key']}/queues/custom/{queue['queue_id']}",
-                "jenkins_build_url": JENKINS_BUILD_URL,
-                "git_url":     GIT_URL,
-                "total":       len(issues),
-                "unassigned":  count_unassigned(issues),
-                "breached":    sla_counts["breached"],
-                "yellow":      sla_counts["yellow"],
-                "grey":        sla_counts["grey"],
-                "by_status":   by_status,
-            })
-            log.info(
-                f"    → {len(issues)} issues across {len(by_status)} statuses, "
-                f"{count_unassigned(issues)} unassigned, {sla_counts['breached']} breached, "
-                f"{sla_counts['yellow']} yellow, {sla_counts['grey']} grey"
-            )
-        except Exception as exc:
-            log.error(f"    ✗ Failed to fetch '{queue['name']}': {exc}")
-
-    if not queue_summaries:
-        log.warning("No data collected — skipping Slack notification.")
-        return
-
-    payload = build_slack_payload(queue_summaries, JIRA_BASE_URL)
-    post_to_slack(payload)
-    log.info("Slack notification sent.")
+    run_gts_report()
+    run_noc_report()
 
 
 def validate_env():
