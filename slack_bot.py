@@ -18,10 +18,15 @@ def _format_queue_blocks(q: dict, queue_type: str, metric_field: dict) -> list:
     # 2. Format Stale Metrics Review
     stale = q.get("stale_metrics", {})
     stale_lines = (
-        f"• Updated < 7 Days: *`{stale.get('updated_recently', 0)}`*\n"
-        f"• Idle > 7 Days: *`{stale.get('stale_not_blocked', 0)}`*\n"
-        f"• Blocked (Excluded): *`{stale.get('stale_blocked', 0)}`*"
+        f"• Updated < 7 Days: *`{stale.get('updated_lt_7d', 0)}`*\n"
+        f"• Idle 7 - 30 Days: *`{stale.get('updated_7_30d', 0)}`*\n"
+        f"• Idle > 30 Days: *`{stale.get('updated_gt_30d', 0)}`*"
     )
+    if queue_type.lower() == "noc":
+        stale_lines += (
+            f"\n• Blocked (Total): *`{stale.get('total_blocked', 0)}`*\n"
+            f"• Reporter 'Wiz': *`{stale.get('wiz_reporter_count', 0)}`*"  # 💡 Added right below Blocked
+        )
 
     # 3. Format Assignee Breakdown
     assignee_counts = dict(q.get("by_assignee", {}))
@@ -32,8 +37,21 @@ def _format_queue_blocks(q: dict, queue_type: str, metric_field: dict) -> list:
     ]
     assignee_lines = "\n".join(assignee_items)
 
+    # Warning Check: Unassigned, Breached (GTS), or > 30d Stale
+    warnings = []
+    if q.get("unassigned", 0) > 0:
+        warnings.append(f"Unassigned ({q['unassigned']})")
+    if queue_type.lower() == "gts" and q.get("breached", 0) > 0:
+        warnings.append(f"Breached ({q['breached']})")
+    if stale.get("updated_gt_30d", 0) > 0:
+        warnings.append(f"Idle > 30d ({stale['updated_gt_30d']})")
+    
+    warning_line = ""
+    if warnings:
+        warning_line = f"\n🚨 *Needs Attention:* {', '.join(warnings)}"
+
     # Dynamic sub-blocks for this individual queue segment (Buttons removed from here)
-    return [
+    blocks = [
         # Queue Title & Summary
         {
             "type": "section",
@@ -42,6 +60,7 @@ def _format_queue_blocks(q: dict, queue_type: str, metric_field: dict) -> list:
                 "text": (
                     f"📂 *{q['name'].upper()}* ({queue_type.upper()})\n"
                     f"📥 *Total Pending:* *`{total}`* ticket{'s' if total != 1 else ''}"
+                    f"{warning_line}"
                 ),
             },
         },
@@ -53,15 +72,18 @@ def _format_queue_blocks(q: dict, queue_type: str, metric_field: dict) -> list:
                 {"type": "mrkdwn", "text": f"*Stale Tickets Review:*\n{stale_lines}"},
             ],
         },
-        # Grid Row 2 (Status Breakdown + Assignee Breakdown)
-        {
-            "type": "section",
-            "fields": [
-                {"type": "mrkdwn", "text": f"*Status Breakdown:*\n{status_lines}"},
-                {"type": "mrkdwn", "text": f"*Assignee Breakdown:*\n{assignee_lines}"},
-            ],
-        },
     ]
+
+    # Add Status/Assignee breakdown row
+    blocks.append({
+        "type": "section",
+        "fields": [
+            {"type": "mrkdwn", "text": f"*Status Breakdown:*\n{status_lines}"},
+            {"type": "mrkdwn", "text": f"*Assignee Breakdown:*\n{assignee_lines}"},
+        ],
+    })
+
+    return blocks
 
 
 def build_combined_slack_payload(gts_q: dict, noc_q: dict) -> dict:

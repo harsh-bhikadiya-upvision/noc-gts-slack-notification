@@ -1,4 +1,4 @@
-import schedule
+# import schedule
 import time
 from config import log, validate_env, JIRA_BASE_URL, JENKINS_BUILD_URL, GIT_URL
 from jira_client import (
@@ -75,34 +75,34 @@ def fetch_noc_data() -> dict:
     }
 
 
-def run_gts_report():
-    log.info("Starting GTS queue report…")
-    try:
-        summary = fetch_gts_data()
-        if summary["total"] == 0:
-            log.warning("No GTS data collected — skipping Slack notification.")
-            return
+# def run_gts_report():
+#     log.info("Starting GTS queue report…")
+#     try:
+#         summary = fetch_gts_data()
+#         if summary["total"] == 0:
+#             log.warning("No GTS data collected — skipping Slack notification.")
+#             return
 
-        payload = build_gts_slack_payload(summary)
-        post_to_slack(payload)
-        log.info("GTS Slack notification sent.")
-    except Exception as exc:
-        log.error(f"  ✗ Failed to run GTS report: {exc}")
+#         payload = build_gts_slack_payload(summary)
+#         post_to_slack(payload)
+#         log.info("GTS Slack notification sent.")
+#     except Exception as exc:
+#         log.error(f"  ✗ Failed to run GTS report: {exc}")
 
 
-def run_noc_report():
-    log.info("Starting NOC queue report…")
-    try:
-        summary = fetch_noc_data()
-        if summary["total"] == 0:
-            log.warning("No NOC data collected — skipping Slack notification.")
-            return
+# def run_noc_report():
+#     log.info("Starting NOC queue report…")
+#     try:
+#         summary = fetch_noc_data()
+#         if summary["total"] == 0:
+#             log.warning("No NOC data collected — skipping Slack notification.")
+#             return
 
-        payload = build_noc_slack_payload(summary)
-        post_to_slack(payload)
-        log.info("NOC Slack notification sent.")
-    except Exception as exc:
-        log.error(f"  ✗ Failed to run NOC report: {exc}")
+#         payload = build_noc_slack_payload(summary)
+#         post_to_slack(payload)
+#         log.info("NOC Slack notification sent.")
+#     except Exception as exc:
+#         log.error(f"  ✗ Failed to run NOC report: {exc}")
 
 
 def run_report():

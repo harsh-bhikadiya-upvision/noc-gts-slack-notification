@@ -42,7 +42,7 @@ def fetch_issues(jql: str, max_results: int = 1000) -> list[dict]:
         resp.raise_for_status()
         data = resp.json()
 
-        print(data)
+        # print(data)
         batch = data.get("issues", [])
         issues.extend(batch)
 
@@ -147,17 +147,33 @@ def aggregate_age_buckets(issues: list[dict]) -> dict[str, int]:
 
 
 def aggregate_stale_metrics(issues: list[dict]) -> dict[str, int]:
-    """Calculate tickets not updated in 7+ days, segmented by 'blocked' label."""
+    """Calculate tickets by update age buckets and total 'blocked' count."""
     metrics = {
-        "stale_not_blocked": 0,
-        "stale_blocked": 0,
-        "updated_recently": 0
+        "updated_lt_7d": 0,
+        "updated_7_30d": 0,
+        "updated_gt_30d": 0,
+        "total_blocked": 0,
+        "wiz_reporter_count": 0
     }
     
     now = datetime.now(timezone.utc)
     
     for issue in issues:
-        updated_str = issue["fields"].get("updated")
+        fields = issue.get("fields", {})
+        
+        # 💡 Check reporter display name for "Wiz"
+        reporter = fields.get("reporter")
+        if reporter and reporter.get("displayName") == "Wiz":
+            metrics["wiz_reporter_count"] += 1
+
+        # 💡 Blocked check (All issues regardless of age)
+        labels = fields.get("labels", [])
+        labels_lower = [str(lbl).lower() for lbl in labels]
+        is_blocked = "blocked" in labels_lower
+        if is_blocked:
+            metrics["total_blocked"] += 1
+
+        updated_str = fields.get("updated")
         if not updated_str:
             continue
             
@@ -171,18 +187,17 @@ def aggregate_stale_metrics(issues: list[dict]) -> dict[str, int]:
                 
         age_days = (now - dt).days
         
-        if age_days >= 7:
-            labels = issue["fields"].get("labels", [])
-            labels_lower = [str(lbl).lower() for lbl in labels]
-            
-            if "blocked" in labels_lower:
-                metrics["stale_blocked"] += 1
+        # Staleness buckets (only for non-blocked tickets):
+        if not is_blocked:
+            if age_days < 7:
+                metrics["updated_lt_7d"] += 1
+            elif age_days < 30:
+                metrics["updated_7_30d"] += 1
             else:
-                metrics["stale_not_blocked"] += 1
-        else:
-            metrics["updated_recently"] += 1
+                metrics["updated_gt_30d"] += 1
                 
     return metrics
+
 
 
 def group_by_status(issues: list[dict]) -> dict[str, int]:
