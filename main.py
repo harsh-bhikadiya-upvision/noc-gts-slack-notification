@@ -6,7 +6,7 @@ from jira_client import (
     group_by_assignee, aggregate_sla_counts, aggregate_age_buckets, 
     aggregate_stale_metrics, count_unassigned
 )
-from slack_bot import build_gts_slack_payload, build_noc_slack_payload, post_to_slack
+from slack_bot import build_combined_slack_payload, post_to_slack
 
 # ─── Main job ──────────────────────────────────────────────────────────────────
 
@@ -106,9 +106,27 @@ def run_noc_report():
 
 
 def run_report():
-    run_gts_report()
-    run_noc_report()
+    """Fetches data for both queues and posts them together in a single unified Slack payload."""
+    log.info("Starting combined GTS & NOC queue report…")
+    try:
+        # 1. Fetch datasets for both queues
+        gts_summary = fetch_gts_data()
+        noc_summary = fetch_noc_data()
 
+        # 2. Safety check: avoid sending an empty block report if both have zero items
+        if gts_summary["total"] == 0 and noc_summary["total"] == 0:
+            log.warning("Both GTS and NOC queues are completely empty — skipping Slack notification.")
+            return
+
+        # 3. Compile the single, combined layout report payload
+        payload = build_combined_slack_payload(gts_summary, noc_summary)
+        
+        # 4. Dispatch the payload execution to Slack
+        post_to_slack(payload)
+        log.info("Combined GTS & NOC unified Slack notification sent successfully.")
+        
+    except Exception as exc:
+        log.error(f"  ✗ Failed to run combined operations report: {exc}")
 
 if __name__ == "__main__":
     validate_env()

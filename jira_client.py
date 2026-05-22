@@ -31,7 +31,7 @@ def fetch_issues(jql: str, max_results: int = 1000) -> list[dict]:
     while True:
         params = {
             "jql": jql,
-            "fields": "customfield_10402,summary,status,priority,assignee,created,updated,labels",
+            "fields": "customfield_10402,summary,status,priority,assignee,created,updated,labels,reporter",
             "maxResults": min(max_results - len(issues), 100),
         }
 
@@ -42,6 +42,7 @@ def fetch_issues(jql: str, max_results: int = 1000) -> list[dict]:
         resp.raise_for_status()
         data = resp.json()
 
+        print(data)
         batch = data.get("issues", [])
         issues.extend(batch)
 
