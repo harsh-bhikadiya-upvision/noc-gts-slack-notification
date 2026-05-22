@@ -4,7 +4,7 @@ from config import log, validate_env, JIRA_BASE_URL, JENKINS_BUILD_URL, GIT_URL
 from jira_client import (
     fetch_queue_config, fetch_issues, group_by_status, 
     group_by_assignee, aggregate_sla_counts, aggregate_age_buckets, 
-    count_unassigned
+    aggregate_stale_metrics, count_unassigned
 )
 from slack_bot import build_gts_slack_payload, build_noc_slack_payload, post_to_slack
 
@@ -17,6 +17,7 @@ def fetch_gts_data() -> dict:
     by_status = group_by_status(issues)
     by_assignee = group_by_assignee(issues)
     sla_counts = aggregate_sla_counts(issues)
+    stale_metrics = aggregate_stale_metrics(issues)
     
     log.info(
         f"    → {len(issues)} issues across {len(by_status)} statuses, "
@@ -39,6 +40,7 @@ def fetch_gts_data() -> dict:
         "grey":        sla_counts["grey"],
         "by_status":   by_status,
         "by_assignee": by_assignee,
+        "stale_metrics": stale_metrics,
     }
 
 
@@ -49,6 +51,7 @@ def fetch_noc_data() -> dict:
     by_status = group_by_status(issues)
     by_assignee = group_by_assignee(issues)
     age_buckets = aggregate_age_buckets(issues)
+    stale_metrics = aggregate_stale_metrics(issues)
     
     log.info(
         f"    → {len(issues)} issues across {len(by_status)} statuses, "
@@ -68,6 +71,7 @@ def fetch_noc_data() -> dict:
         "by_status":   by_status,
         "by_assignee": by_assignee,
         "age_buckets": age_buckets,
+        "stale_metrics": stale_metrics,
     }
 
 

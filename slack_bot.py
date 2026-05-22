@@ -65,6 +65,21 @@ def build_gts_slack_payload(q: dict) -> dict:
     }
     blocks.append(fields_block)
     
+    stale = q.get("stale_metrics", {})
+    stale_lines = (
+        f"• Updated < 7 Days: *`{stale.get('updated_recently', 0)}`*\n"
+        f"• Idle > 7 Days: *`{stale.get('stale_not_blocked', 0)}`*\n"
+        f"• Blocked (Excluded): *`{stale.get('stale_blocked', 0)}`*"
+    )
+    stale_block = {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": f"*Stale Tickets Review:*\n{stale_lines}"
+        }
+    }
+    blocks.append(stale_block)
+    
     # 3b. Add Assignee breakdown
     assignee_counts = dict(q.get("by_assignee", {}))
     unassigned = assignee_counts.pop("Unassigned", 0)
@@ -204,6 +219,21 @@ def build_noc_slack_payload(q: dict) -> dict:
         ],
     }
     blocks.append(fields_block)
+
+    stale = q.get("stale_metrics", {})
+    stale_lines = (
+        f"• Updated < 7 Days: *`{stale.get('updated_recently', 0)}`*\n"
+        f"• Idle > 7 Days: *`{stale.get('stale_not_blocked', 0)}`*\n"
+        f"• Blocked (Excluded): *`{stale.get('stale_blocked', 0)}`*"
+    )
+    stale_block = {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": f"*Stale Tickets Review:*\n{stale_lines}"
+        }
+    }
+    blocks.append(stale_block)
 
     # 3b. Add Assignee breakdown
     assignee_counts = dict(q.get("by_assignee", {}))

@@ -31,7 +31,7 @@ def fetch_issues(jql: str, max_results: int = 1000) -> list[dict]:
     while True:
         params = {
             "jql": jql,
-            "fields": "customfield_10402,summary,status,priority,assignee,created,updated",
+            "fields": "customfield_10402,summary,status,priority,assignee,created,updated,labels",
             "maxResults": min(max_results - len(issues), 100),
         }
 
@@ -143,6 +143,45 @@ def aggregate_age_buckets(issues: list[dict]) -> dict[str, int]:
             buckets["> 1 year"] += 1
             
     return buckets
+
+
+def aggregate_stale_metrics(issues: list[dict]) -> dict[str, int]:
+    """Calculate tickets not updated in 7+ days, segmented by 'blocked' label."""
+    metrics = {
+        "stale_not_blocked": 0,
+        "stale_blocked": 0,
+        "updated_recently": 0
+    }
+    
+    now = datetime.now(timezone.utc)
+    
+    for issue in issues:
+        updated_str = issue["fields"].get("updated")
+        if not updated_str:
+            continue
+            
+        try:
+            dt = datetime.strptime(updated_str, "%Y-%m-%dT%H:%M:%S.%f%z")
+        except ValueError:
+            try:
+                dt = datetime.fromisoformat(updated_str)
+            except ValueError:
+                continue
+                
+        age_days = (now - dt).days
+        
+        if age_days >= 7:
+            labels = issue["fields"].get("labels", [])
+            labels_lower = [str(lbl).lower() for lbl in labels]
+            
+            if "blocked" in labels_lower:
+                metrics["stale_blocked"] += 1
+            else:
+                metrics["stale_not_blocked"] += 1
+        else:
+            metrics["updated_recently"] += 1
+                
+    return metrics
 
 
 def group_by_status(issues: list[dict]) -> dict[str, int]:
