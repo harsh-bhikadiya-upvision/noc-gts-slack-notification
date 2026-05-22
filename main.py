@@ -4,10 +4,9 @@ import time
 import logging
 import requests
 import schedule
-from datetime import datetime
+from datetime import datetime, timezone
 from dotenv import load_dotenv
 
-from datetime import datetime
 import urllib.parse  
 
 load_dotenv()
@@ -50,7 +49,7 @@ def fetch_queue_config(project_key: str, queue_id: int) -> dict[str, object]:
 # ─── Jira helpers ─────────────────────────────────────────────────────────────
 
 
-def fetch_issues(jql: str, max_results: int = 1000) -> list[dict]:
+def fetch_issues(jql: str, max_results: int = 200) -> list[dict]:
     """Return all issues matching a JQL query (handles pagination)."""
     url = f"{JIRA_BASE_URL}/rest/api/3/search/jql"
     headers = {"Accept": "application/json"}
@@ -73,7 +72,7 @@ def fetch_issues(jql: str, max_results: int = 1000) -> list[dict]:
 
         batch = data.get("issues", [])
         issues.extend(batch)
-
+        # print(data)
         if len(issues) >= max_results:
             log.info(f"Reached user-defined max_results cap ({max_results}).")
             break
@@ -140,6 +139,49 @@ def aggregate_sla_counts(issues: list[dict]) -> dict[str, int]:
         for key, value in metrics.items():
             counts[key] += value
     return counts
+
+
+def aggregate_age_buckets(issues: list[dict]) -> dict[str, int]:
+    buckets = {
+        "< 7 days old": 0,
+        "7 to 30 days old": 0,
+        "1 to 3 months old": 0,
+        "3 to 6 months old": 0,
+        "6 months to 1 year": 0,
+        "> 1 year": 0
+    }
+    
+    now = datetime.now(timezone.utc)
+    
+    for issue in issues:
+        created_str = issue["fields"].get("created")
+        if not created_str:
+            continue
+            
+        try:
+            dt = datetime.strptime(created_str, "%Y-%m-%dT%H:%M:%S.%f%z")
+        except ValueError:
+            try:
+                dt = datetime.fromisoformat(created_str)
+            except ValueError:
+                continue
+                
+        age_days = (now - dt).days
+        
+        if age_days < 7:
+            buckets["< 7 days old"] += 1
+        elif age_days < 30:
+            buckets["7 to 30 days old"] += 1
+        elif age_days < 90:
+            buckets["1 to 3 months old"] += 1
+        elif age_days < 180:
+            buckets["3 to 6 months old"] += 1
+        elif age_days < 365:
+            buckets["6 months to 1 year"] += 1
+        else:
+            buckets["> 1 year"] += 1
+            
+    return buckets
 
 
 def group_by_status(issues: list[dict]) -> dict[str, int]:
@@ -316,17 +358,19 @@ def build_noc_slack_payload(q: dict) -> dict:
     }
     blocks.append(queue_header_block)
 
-    # 3. Add the SLA Metrics and Status breakdown side-by-side with bolded metrics
+    # 3. Add the Ticket Age and Status breakdown side-by-side with bolded metrics
+    buckets = q.get("age_buckets", {})
+    age_lines = "\n".join(
+        f"• {k}: *`{v}`*" for k, v in buckets.items() #if v > 0  # Uncomment to show only non-zero
+    )
+
     fields_block = {
         "type": "section",
         "fields": [
             {
                 "type": "mrkdwn",
                 "text": (
-                    f"*Time to Resolution:*\n"
-                    f"🔴 Breached: *`{q['breached']}`*\n"
-                    f"🟡 Paused but Time Over: *`{q['yellow']}`*\n"
-                    f"⚪ Not Breached: *`{q['grey']}`*"
+                    f"*Ticket Age:*\n{age_lines}"
                 ),
             },
             {"type": "mrkdwn", "text": f"*Status Breakdown:*\n{status_lines}"},
@@ -388,6 +432,7 @@ def build_noc_slack_payload(q: dict) -> dict:
 
 
 def post_to_slack(payload: dict) -> None:
+    # return # TODO remove this
     resp = requests.post(
         SLACK_WEBHOOK,
         data=json.dumps(payload),
@@ -434,12 +479,11 @@ def fetch_noc_data() -> dict:
     log.info(f"  Fetching NOC: {queue['name']}")
     issues = fetch_issues(queue["jql"])
     by_status = group_by_status(issues)
-    sla_counts = aggregate_sla_counts(issues)
+    age_buckets = aggregate_age_buckets(issues)
     
     log.info(
         f"    → {len(issues)} issues across {len(by_status)} statuses, "
-        f"{count_unassigned(issues)} unassigned, {sla_counts['breached']} breached, "
-        f"{sla_counts['yellow']} yellow, {sla_counts['grey']} grey"
+        f"{count_unassigned(issues)} unassigned"
     )
     
     return {
@@ -452,10 +496,8 @@ def fetch_noc_data() -> dict:
         "git_url":     GIT_URL,
         "total":       len(issues),
         "unassigned":  count_unassigned(issues),
-        "breached":    sla_counts["breached"],
-        "yellow":      sla_counts["yellow"],
-        "grey":        sla_counts["grey"],
         "by_status":   by_status,
+        "age_buckets": age_buckets,
     }
 
 
@@ -490,7 +532,7 @@ def run_noc_report():
 
 
 def run_report():
-    run_gts_report()
+    # run_gts_report()
     run_noc_report()
 
 
