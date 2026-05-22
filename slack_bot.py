@@ -3,17 +3,43 @@ import requests
 from datetime import datetime
 from config import SLACK_WEBHOOK, JENKINS_BUILD_URL, GIT_URL
 
-def build_gts_slack_payload(q: dict) -> dict:
-    """Build a dynamic, highly scannable, and fabulous Slack Block Kit message for GTS."""
+def _build_base_slack_payload(q: dict, queue_type: str, metric_field: dict) -> dict:
+    """Core helper function to generate scannable and beautiful Slack payloads."""
     now = datetime.now().strftime("%d %b %Y, %H:%M")
+    total = q["total"]
+    
+    # 1. Format Status Breakdown
+    status_items = [
+        f"• *{status}*: *`{count}`*"
+        for status, count in sorted(q["by_status"].items(), key=lambda x: -x[1])
+    ]
+    status_lines = "\n".join(status_items) if status_items else "• _No tickets found_"
 
-    # Header section with a clean layout and dynamic timestamp
+    # 2. Format Stale Metrics Review
+    stale = q.get("stale_metrics", {})
+    stale_lines = (
+        f"• Updated < 7 Days: *`{stale.get('updated_recently', 0)}`*\n"
+        f"• Idle > 7 Days: *`{stale.get('stale_not_blocked', 0)}`*\n"
+        f"• Blocked (Excluded): *`{stale.get('stale_blocked', 0)}`*"
+    )
+
+    # 3. Format Assignee Breakdown
+    assignee_counts = dict(q.get("by_assignee", {}))
+    unassigned = assignee_counts.pop("Unassigned", 0)
+    assignee_items = [f"• Unassigned: *`{unassigned}`*"] + [
+        f"• {name}: *`{count}`*"
+        for name, count in sorted(assignee_counts.items(), key=lambda x: -x[1])
+    ]
+    assignee_lines = "\n".join(assignee_items)
+
+    # Construct Block Kit Structure
     blocks = [
+        # Header & Context
         {
             "type": "header",
             "text": {
                 "type": "plain_text",
-                "text": "📊 GTS Queue Status Report",
+                "text": f"📊 {queue_type.upper()} Queue Status Report",
                 "emoji": True,
             },
         },
@@ -22,293 +48,99 @@ def build_gts_slack_payload(q: dict) -> dict:
             "elements": [{"type": "mrkdwn", "text": f"🕒 Generated on *{now}*"}],
         },
         {"type": "divider"},
-    ]
-
-    total = q["total"]
-
-    # 1. Format the status breakdown into a clean bulleted list with bolded numbers
-    status_lines = "\n".join(
-        f"• *{s}*: *`{c}`*"
-        for s, c in sorted(q["by_status"].items(), key=lambda x: -x[1])
-    )
-    if not status_lines:
-        status_lines = "• _No tickets found_"
-
-    # 2. Simplified queue header block with bolded numbers
-    queue_header_block = {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": (
-                f"📂 *{q['name'].upper()}*\n"
-                f"📥 *Total Pending:* *`{total}`* ticket{'s' if total != 1 else ''}"
-            ),
-        },
-    }
-    blocks.append(queue_header_block)
-
-    # 3. Add the SLA Metrics and Status breakdown side-by-side with bolded metrics
-    fields_block = {
-        "type": "section",
-        "fields": [
-            {
+        
+        # Queue Title & Summary
+        {
+            "type": "section",
+            "text": {
                 "type": "mrkdwn",
                 "text": (
-                    f"*Time to Resolution:*\n"
-                    f"🔴 Breached: *`{q['breached']}`*\n"
-                    f"🟡 Paused but Time Over: *`{q['yellow']}`*\n"
-                    f"⚪ Not Breached: *`{q['grey']}`*"
+                    f"📂 *{q['name'].upper()}*\n"
+                    f"📥 *Total Pending:* *`{total}`* ticket{'s' if total != 1 else ''}"
                 ),
             },
-            {"type": "mrkdwn", "text": f"*Status Breakdown:*\n{status_lines}"},
-        ],
-    }
-    blocks.append(fields_block)
-    
-    stale = q.get("stale_metrics", {})
-    stale_lines = (
-        f"• Updated < 7 Days: *`{stale.get('updated_recently', 0)}`*\n"
-        f"• Idle > 7 Days: *`{stale.get('stale_not_blocked', 0)}`*\n"
-        f"• Blocked (Excluded): *`{stale.get('stale_blocked', 0)}`*"
-    )
-    stale_block = {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": f"*Stale Tickets Review:*\n{stale_lines}"
-        }
-    }
-    blocks.append(stale_block)
-    
-    # 3b. Add Assignee breakdown
-    assignee_counts = dict(q.get("by_assignee", {}))
-    unassigned = assignee_counts.pop("Unassigned", 0)
-    
-    assignee_items = []
-    assignee_items.append(f"• Unassigned: *`{unassigned}`*")
+        },
         
-    assignee_items.extend(
-        f"• {a}: *`{c}`*"
-        for a, c in sorted(assignee_counts.items(), key=lambda x: -x[1])
-    )
-    
-    assignee_lines = "\n".join(assignee_items)
-
-    assignee_block = {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": f"*Assignee Breakdown:*\n{assignee_lines}"
+        # Grid Row 1 (Metric Field + Stale Tickets Review)
+        {
+            "type": "section",
+            "fields": [
+                metric_field,
+                {"type": "mrkdwn", "text": f"*Stale Tickets Review:*\n{stale_lines}"},
+            ],
+        },
+        
+        # Grid Row 2 (Status Breakdown + Assignee Breakdown) - Spacers completely removed
+        {
+            "type": "section",
+            "fields": [
+                {"type": "mrkdwn", "text": f"*Status Breakdown:*\n{status_lines}"},
+                {"type": "mrkdwn", "text": f"*Assignee Breakdown:*\n{assignee_lines}"},
+            ],
+        },
+        
+        # Queue-Specific Call to Action
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "🚀 Open Queue", "emoji": True},
+                    "url": q["open_url"],
+                    "action_id": f"open_jira_{queue_type.lower()}",
+                    "style": "primary"
+                }
+            ]
+        },
+        {"type": "divider"},
+        
+        # Global Action Links
+        {
+            "type": "actions",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "⚙️ View Jenkins Build", "emoji": True},
+                    "url": JENKINS_BUILD_URL,
+                    "action_id": "view_jenkins_build"
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "📦 View Python Script", "emoji": True},
+                    "url": GIT_URL or "",
+                    "action_id": "view_github_script"
+                }
+            ]
         }
-    }
-    blocks.append(assignee_block)
-
-    # 4. Action block placed cleanly below the metrics row
-    action_block = {
-        "type": "actions",
-        "elements": [
-            {
-                "type": "button",
-                "text": {
-                    "type": "plain_text",
-                    "text": "🚀 Open Queue",
-                    "emoji": True,
-                },
-                "url": q["open_url"],
-                "action_id": f"open_jira_gts",
-                "style": "primary"
-            }
-        ]
-    }
-    blocks.append(action_block)
-
-    # Divider
-    blocks.append({"type": "divider"})
-
-    # Add global actions
-    global_actions = {
-        "type": "actions",
-        "elements": [
-            {
-                "type": "button",
-                "text": {
-                    "type": "plain_text",
-                    "text": "⚙️ View Jenkins Build",
-                    "emoji": True,
-                },
-                "url": JENKINS_BUILD_URL,
-                "action_id": "view_jenkins_build"
-            },
-            {
-                "type": "button",
-                "text": {
-                    "type": "plain_text",
-                    "text": "📦 View Python Script",
-                    "emoji": True,
-                },
-                "url": GIT_URL if GIT_URL else "",
-                "action_id": "view_github_script"
-            }
-        ]
-    }
-    blocks.append(global_actions)
+    ]
 
     return {"blocks": blocks}
+
+
+def build_gts_slack_payload(q: dict) -> dict:
+    """Build a dynamic, highly scannable, and fabulous Slack Block Kit message for GTS."""
+    gts_metric = {
+        "type": "mrkdwn",
+        "text": (
+            f"*Time to Resolution:*\n"
+            f"🔴 Breached: *`{q.get('breached', 0)}`*\n"
+            f"🟡 Paused but Time Over: *`{q.get('yellow', 0)}`*\n"
+            f"⚪ Not Breached: *`{q.get('grey', 0)}`*"
+        ),
+    }
+    return _build_base_slack_payload(q, queue_type="gts", metric_field=gts_metric)
 
 
 def build_noc_slack_payload(q: dict) -> dict:
     """Build a dynamic, highly scannable, and fabulous Slack Block Kit message for NOC."""
-    now = datetime.now().strftime("%d %b %Y, %H:%M")
-
-    # Header section with a clean layout and dynamic timestamp
-    blocks = [
-        {
-            "type": "header",
-            "text": {
-                "type": "plain_text",
-                "text": "📊 NOC Queue Status Report",
-                "emoji": True,
-            },
-        },
-        {
-            "type": "context",
-            "elements": [{"type": "mrkdwn", "text": f"🕒 Generated on *{now}*"}],
-        },
-        {"type": "divider"},
-    ]
-
-    total = q["total"]
-
-    # 1. Format the status breakdown into a clean bulleted list with bolded numbers
-    status_lines = "\n".join(
-        f"• *{s}*: *`{c}`*"
-        for s, c in sorted(q["by_status"].items(), key=lambda x: -x[1])
-    )
-    if not status_lines:
-        status_lines = "• _No tickets found_"
-
-    # 2. Simplified queue header block with bolded numbers
-    queue_header_block = {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": (
-                f"📂 *{q['name'].upper()}*\n"
-                f"📥 *Total Pending:* *`{total}`* ticket{'s' if total != 1 else ''}"
-            ),
-        },
-    }
-    blocks.append(queue_header_block)
-
-    # 3. Add the Ticket Age and Status breakdown side-by-side with bolded metrics
     buckets = q.get("age_buckets", {})
-    age_lines = "\n".join(
-        f"• {k}: *`{v}`*" for k, v in buckets.items() #if v > 0  # Uncomment to show only non-zero
-    )
-
-    fields_block = {
-        "type": "section",
-        "fields": [
-            {
-                "type": "mrkdwn",
-                "text": (
-                    f"*Ticket Age:*\n{age_lines}"
-                ),
-            },
-            {"type": "mrkdwn", "text": f"*Status Breakdown:*\n{status_lines}"},
-        ],
-    }
-    blocks.append(fields_block)
-
-    stale = q.get("stale_metrics", {})
-    stale_lines = (
-        f"• Updated < 7 Days: *`{stale.get('updated_recently', 0)}`*\n"
-        f"• Idle > 7 Days: *`{stale.get('stale_not_blocked', 0)}`*\n"
-        f"• Blocked (Excluded): *`{stale.get('stale_blocked', 0)}`*"
-    )
-    stale_block = {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": f"*Stale Tickets Review:*\n{stale_lines}"
-        }
-    }
-    blocks.append(stale_block)
-
-    # 3b. Add Assignee breakdown
-    assignee_counts = dict(q.get("by_assignee", {}))
-    unassigned = assignee_counts.pop("Unassigned", 0)
+    age_lines = "\n".join(f"• {k}: *`{v}`*" for k, v in buckets.items())
     
-    assignee_items = []
-    assignee_items.append(f"• Unassigned: *`{unassigned}`*")
-        
-    assignee_items.extend(
-        f"• {a}: *`{c}`*"
-        for a, c in sorted(assignee_counts.items(), key=lambda x: -x[1])
-    )
-    
-    assignee_lines = "\n".join(assignee_items)
-
-    assignee_block = {
-        "type": "section",
-        "text": {
-            "type": "mrkdwn",
-            "text": f"*Assignee Breakdown:*\n{assignee_lines}"
-        }
+    noc_metric = {
+        "type": "mrkdwn",
+        "text": f"*Ticket Age:*\n{age_lines or '• _No data_'}",
     }
-    blocks.append(assignee_block)
-
-    # 4. Action block placed cleanly below the metrics row
-    action_block = {
-        "type": "actions",
-        "elements": [
-            {
-                "type": "button",
-                "text": {
-                    "type": "plain_text",
-                    "text": "🚀 Open Queue",
-                    "emoji": True,
-                },
-                "url": q["open_url"],
-                "action_id": f"open_jira_noc",
-                "style": "primary"
-            }
-        ]
-    }
-    blocks.append(action_block)
-
-    # Divider
-    blocks.append({"type": "divider"})
-
-    # Add global actions
-    global_actions = {
-        "type": "actions",
-        "elements": [
-            {
-                "type": "button",
-                "text": {
-                    "type": "plain_text",
-                    "text": "⚙️ View Jenkins Build",
-                    "emoji": True,
-                },
-                "url": JENKINS_BUILD_URL,
-                "action_id": "view_jenkins_build"
-            },
-            {
-                "type": "button",
-                "text": {
-                    "type": "plain_text",
-                    "text": "📦 View Python Script",
-                    "emoji": True,
-                },
-                "url": GIT_URL if GIT_URL else "",
-                "action_id": "view_github_script"
-            }
-        ]
-    }
-    blocks.append(global_actions)
-
-    return {"blocks": blocks}
+    return _build_base_slack_payload(q, queue_type="noc", metric_field=noc_metric)
 
 def post_to_slack(payload: dict) -> None:
     resp = requests.post(
