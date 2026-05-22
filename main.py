@@ -49,7 +49,7 @@ def fetch_queue_config(project_key: str, queue_id: int) -> dict[str, object]:
 # ─── Jira helpers ─────────────────────────────────────────────────────────────
 
 
-def fetch_issues(jql: str, max_results: int = 200) -> list[dict]:
+def fetch_issues(jql: str, max_results: int = 1000) -> list[dict]:
     """Return all issues matching a JQL query (handles pagination)."""
     url = f"{JIRA_BASE_URL}/rest/api/3/search/jql"
     headers = {"Accept": "application/json"}
@@ -193,6 +193,19 @@ def group_by_status(issues: list[dict]) -> dict[str, int]:
     return counts
 
 
+def group_by_assignee(issues: list[dict]) -> dict[str, int]:
+    """Return { assignee_name: count } for a list of issues."""
+    counts: dict[str, int] = {}
+    for issue in issues:
+        assignee = issue["fields"].get("assignee")
+        if assignee is None:
+            name = "Unassigned"
+        else:
+            name = assignee.get("displayName", assignee.get("name", "Unknown"))
+        counts[name] = counts.get(name, 0) + 1
+    return counts
+
+
 def count_unassigned(issues: list[dict]) -> int:
     """Return the number of issues with no assignee."""
     return sum(1 for issue in issues if issue["fields"].get("assignee") is None)
@@ -235,8 +248,7 @@ def build_gts_slack_payload(q: dict) -> dict:
             "type": "mrkdwn",
             "text": (
                 f"📂 *{q['name'].upper()}*\n"
-                f"📥 *Total Pending:* *`{total}`* ticket{'s' if total != 1 else ''}  |  "
-                f"👤 *Unassigned:* *`{q['unassigned']}`*"
+                f"📥 *Total Pending:* *`{total}`* ticket{'s' if total != 1 else ''}"
             ),
         },
     }
@@ -260,6 +272,29 @@ def build_gts_slack_payload(q: dict) -> dict:
     }
     blocks.append(fields_block)
     
+    # 3b. Add Assignee breakdown
+    assignee_counts = dict(q.get("by_assignee", {}))
+    unassigned = assignee_counts.pop("Unassigned", 0)
+    
+    assignee_items = []
+    assignee_items.append(f"• Unassigned: *`{unassigned}`*")
+        
+    assignee_items.extend(
+        f"• {a}: *`{c}`*"
+        for a, c in sorted(assignee_counts.items(), key=lambda x: -x[1])
+    )
+    
+    assignee_lines = "\n".join(assignee_items)
+
+    assignee_block = {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": f"*Assignee Breakdown:*\n{assignee_lines}"
+        }
+    }
+    blocks.append(assignee_block)
+
     # 4. Action block placed cleanly below the metrics row
     action_block = {
         "type": "actions",
@@ -351,8 +386,7 @@ def build_noc_slack_payload(q: dict) -> dict:
             "type": "mrkdwn",
             "text": (
                 f"📂 *{q['name'].upper()}*\n"
-                f"📥 *Total Pending:* *`{total}`* ticket{'s' if total != 1 else ''}  |  "
-                f"👤 *Unassigned:* *`{q['unassigned']}`*"
+                f"📥 *Total Pending:* *`{total}`* ticket{'s' if total != 1 else ''}"
             ),
         },
     }
@@ -377,6 +411,29 @@ def build_noc_slack_payload(q: dict) -> dict:
         ],
     }
     blocks.append(fields_block)
+
+    # 3b. Add Assignee breakdown
+    assignee_counts = dict(q.get("by_assignee", {}))
+    unassigned = assignee_counts.pop("Unassigned", 0)
+    
+    assignee_items = []
+    assignee_items.append(f"• Unassigned: *`{unassigned}`*")
+        
+    assignee_items.extend(
+        f"• {a}: *`{c}`*"
+        for a, c in sorted(assignee_counts.items(), key=lambda x: -x[1])
+    )
+    
+    assignee_lines = "\n".join(assignee_items)
+
+    assignee_block = {
+        "type": "section",
+        "text": {
+            "type": "mrkdwn",
+            "text": f"*Assignee Breakdown:*\n{assignee_lines}"
+        }
+    }
+    blocks.append(assignee_block)
 
     # 4. Action block placed cleanly below the metrics row
     action_block = {
@@ -449,6 +506,7 @@ def fetch_gts_data() -> dict:
     log.info(f"  Fetching GTS: {queue['name']}")
     issues = fetch_issues(queue["jql"])
     by_status = group_by_status(issues)
+    by_assignee = group_by_assignee(issues)
     sla_counts = aggregate_sla_counts(issues)
     
     log.info(
@@ -471,6 +529,7 @@ def fetch_gts_data() -> dict:
         "yellow":      sla_counts["yellow"],
         "grey":        sla_counts["grey"],
         "by_status":   by_status,
+        "by_assignee": by_assignee,
     }
 
 
@@ -479,6 +538,7 @@ def fetch_noc_data() -> dict:
     log.info(f"  Fetching NOC: {queue['name']}")
     issues = fetch_issues(queue["jql"])
     by_status = group_by_status(issues)
+    by_assignee = group_by_assignee(issues)
     age_buckets = aggregate_age_buckets(issues)
     
     log.info(
@@ -497,6 +557,7 @@ def fetch_noc_data() -> dict:
         "total":       len(issues),
         "unassigned":  count_unassigned(issues),
         "by_status":   by_status,
+        "by_assignee": by_assignee,
         "age_buckets": age_buckets,
     }
 
@@ -532,7 +593,7 @@ def run_noc_report():
 
 
 def run_report():
-    # run_gts_report()
+    run_gts_report()
     run_noc_report()
 
 
