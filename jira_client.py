@@ -27,6 +27,7 @@ def fetch_issues(jql: str, max_results: int = 1000) -> list[dict]:
     headers = {"Accept": "application/json"}
     issues = []
     next_page_token = None
+    page_num = 1
 
     while True:
         params = {
@@ -37,6 +38,9 @@ def fetch_issues(jql: str, max_results: int = 1000) -> list[dict]:
 
         if next_page_token:
             params["nextPageToken"] = next_page_token
+            log.info(f"  Fetching page {page_num} (nextPageToken: ...{str(next_page_token)[-15:]})")
+        else:
+            log.info(f"  Fetching page {page_num} (first page)...")
 
         resp = requests.get(url, params=params, auth=jira_auth(), headers=headers, timeout=15)
         resp.raise_for_status()
@@ -45,6 +49,7 @@ def fetch_issues(jql: str, max_results: int = 1000) -> list[dict]:
         # print(data)
         batch = data.get("issues", [])
         issues.extend(batch)
+        log.info(f"    → Page {page_num} fetched {len(batch)} issues. Total issues so far: {len(issues)}")
 
         if len(issues) >= max_results:
             log.info(f"Reached user-defined max_results cap ({max_results}).")
@@ -57,6 +62,9 @@ def fetch_issues(jql: str, max_results: int = 1000) -> list[dict]:
             log.info("Reached the last page (Token/Batch check). Loop break.")
             break
 
+        page_num += 1
+
+    log.info(f"Successfully fetched a total of {len(issues)} issues across {page_num} page(s).")
     return issues
 
 
