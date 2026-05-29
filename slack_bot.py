@@ -9,10 +9,16 @@ def _format_queue_blocks(q: dict, queue_type: str, metric_field: dict) -> list:
     total = q["total"]
     
     # 1. Format Status Breakdown
-    status_items = [
-        f"• *{status}*: *`{count}`*"
-        for status, count in sorted(q["by_status"].items(), key=lambda x: -x[1])
-    ]
+    if queue_type.lower() == "noc":
+        status_items = [
+            f"• *{status}*: *`{v['count']}`* (Wiz: *`{v.get('wiz', 0)}`*)"
+            for status, v in sorted(q["by_status"].items(), key=lambda x: -x[1]["count"])
+        ]
+    else:
+        status_items = [
+            f"• *{status}*: *`{v['count']}`*"
+            for status, v in sorted(q["by_status"].items(), key=lambda x: -x[1]["count"])
+        ]
     status_lines = "\n".join(status_items) if status_items else "• _No tickets found_"
 
     # 2. Format Stale Metrics Review
@@ -30,11 +36,21 @@ def _format_queue_blocks(q: dict, queue_type: str, metric_field: dict) -> list:
 
     # 3. Format Assignee Breakdown
     assignee_counts = dict(q.get("by_assignee", {}))
-    unassigned = assignee_counts.pop("Unassigned", 0)
-    assignee_items = [f"• Unassigned: *`{unassigned}`*"] + [
-        f"• {name}: *`{count}`*"
-        for name, count in sorted(assignee_counts.items(), key=lambda x: -x[1])
-    ]
+    unassigned = assignee_counts.pop("Unassigned", {"count": 0, "wiz": 0})
+    if queue_type.lower() == "noc":
+        assignee_items = [
+            f"• Unassigned: *`{unassigned['count']}`* (Wiz: *`{unassigned.get('wiz', 0)}`*)"
+        ] + [
+            f"• {name}: *`{v['count']}`* (Wiz: *`{v.get('wiz', 0)}`*)"
+            for name, v in sorted(assignee_counts.items(), key=lambda x: -x[1]["count"])
+        ]
+    else:
+        assignee_items = [
+            f"• Unassigned: *`{unassigned['count']}`*"
+        ] + [
+            f"• {name}: *`{v['count']}`*"
+            for name, v in sorted(assignee_counts.items(), key=lambda x: -x[1]["count"])
+        ]
     assignee_lines = "\n".join(assignee_items)
 
     # Warning Check: Unassigned, Breached (GTS), or > 30d Stale
@@ -103,7 +119,10 @@ def build_combined_slack_payload(gts_q: dict, noc_q: dict) -> dict:
     
     # Pre-build metric blocks for NOC
     buckets = noc_q.get("age_buckets", {})
-    age_lines = "\n".join(f"• {k}: *`{v}`*" for k, v in buckets.items())
+    age_lines = "\n".join(
+        f"• {k}: *`{v['count']}`* (Wiz: *`{v.get('wiz', 0)}`*)"
+        for k, v in buckets.items()
+    )
     noc_metric = {
         "type": "mrkdwn",
         "text": f"*Ticket Age:*\n{age_lines or '• _No data_'}",
@@ -115,6 +134,13 @@ def build_combined_slack_payload(gts_q: dict, noc_q: dict) -> dict:
 
     # Master payload structure
     blocks = [
+        {
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": "<!channel>"
+            }
+        },
         # Main Global Header
         {
             "type": "header",

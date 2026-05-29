@@ -16,7 +16,7 @@ def fetch_queue_config(project_key: str, queue_id: int) -> dict[str, object]:
         "project_key": project_key,
         "queue_id": queue_id,
         "jql": resp.json()["jql"],
-        "name": f"{project_key}: {resp.json()["name"]}"
+        "name": f"{project_key}: {resp.json()['name']}"
     }
     return ans
 
@@ -111,14 +111,14 @@ def aggregate_sla_counts(issues: list[dict]) -> dict[str, int]:
     return counts
 
 
-def aggregate_age_buckets(issues: list[dict]) -> dict[str, int]:
+def aggregate_age_buckets(issues: list[dict]) -> dict[str, dict]:
     buckets = {
-        "< 7 days old": 0,
-        "7 to 30 days old": 0,
-        "1 to 3 months old": 0,
-        "3 to 6 months old": 0,
-        "6 months to 1 year": 0,
-        "> 1 year": 0
+        "< 7 days old": {"count": 0, "wiz": 0},
+        "7 to 30 days old": {"count": 0, "wiz": 0},
+        "1 to 3 months old": {"count": 0, "wiz": 0},
+        "3 to 6 months old": {"count": 0, "wiz": 0},
+        "6 months to 1 year": {"count": 0, "wiz": 0},
+        "> 1 year": {"count": 0, "wiz": 0}
     }
     
     now = datetime.now(timezone.utc)
@@ -139,17 +139,23 @@ def aggregate_age_buckets(issues: list[dict]) -> dict[str, int]:
         age_days = (now - dt).days
         
         if age_days < 7:
-            buckets["< 7 days old"] += 1
+            bucket = "< 7 days old"
         elif age_days < 30:
-            buckets["7 to 30 days old"] += 1
+            bucket = "7 to 30 days old"
         elif age_days < 90:
-            buckets["1 to 3 months old"] += 1
+            bucket = "1 to 3 months old"
         elif age_days < 180:
-            buckets["3 to 6 months old"] += 1
+            bucket = "3 to 6 months old"
         elif age_days < 365:
-            buckets["6 months to 1 year"] += 1
+            bucket = "6 months to 1 year"
         else:
-            buckets["> 1 year"] += 1
+            bucket = "> 1 year"
+            
+        buckets[bucket]["count"] += 1
+        
+        reporter = issue["fields"].get("reporter")
+        if reporter and reporter.get("displayName") == "Wiz":
+            buckets[bucket]["wiz"] += 1
             
     return buckets
 
@@ -208,25 +214,50 @@ def aggregate_stale_metrics(issues: list[dict]) -> dict[str, int]:
 
 
 
-def group_by_status(issues: list[dict]) -> dict[str, int]:
-    """Return { status_name: count } for a list of issues."""
-    counts: dict[str, int] = {}
+def group_by_status(issues: list[dict]) -> dict[str, dict]:
+    """Return { status_name: { 'count': int, 'wiz': int } } for a list of issues.
+
+    Each status entry contains the total ticket count and how many of those
+    have reporter displayName == "Wiz".
+    """
+    counts: dict[str, dict] = {}
     for issue in issues:
         status = issue["fields"]["status"]["name"]
-        counts[status] = counts.get(status, 0) + 1
+        entry = counts.get(status)
+        if entry is None:
+            entry = {"count": 0, "wiz": 0}
+            counts[status] = entry
+
+        entry["count"] += 1
+
+        reporter = issue["fields"].get("reporter")
+        if reporter and reporter.get("displayName") == "Wiz":
+            entry["wiz"] += 1
+
     return counts
 
 
-def group_by_assignee(issues: list[dict]) -> dict[str, int]:
-    """Return { assignee_name: count } for a list of issues."""
-    counts: dict[str, int] = {}
+def group_by_assignee(issues: list[dict]) -> dict[str, dict]:
+    """Return { assignee_name: { 'count': int, 'wiz': int } } for a list of issues."""
+    counts: dict[str, dict] = {}
     for issue in issues:
         assignee = issue["fields"].get("assignee")
         if assignee is None:
             name = "Unassigned"
         else:
             name = assignee.get("displayName", assignee.get("name", "Unknown"))
-        counts[name] = counts.get(name, 0) + 1
+        
+        entry = counts.get(name)
+        if entry is None:
+            entry = {"count": 0, "wiz": 0}
+            counts[name] = entry
+            
+        entry["count"] += 1
+        
+        reporter = issue["fields"].get("reporter")
+        if reporter and reporter.get("displayName") == "Wiz":
+            entry["wiz"] += 1
+            
     return counts
 
 
